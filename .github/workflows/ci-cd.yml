@@ -1,0 +1,65 @@
+name: CI-CD
+
+on:
+  push: { branches: [main] }
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r backend/requirements.txt
+      - run: cd backend && pytest -v
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: cd frontend && npm install && npm run build
+
+  build-push:
+    needs: [test-backend, test-frontend]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: ghcr.io/${{ env.OWNER }}/grocery-backend:${{ github.sha }},ghcr.io/${{ env.OWNER }}/grocery-backend:latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: ghcr.io/${{ env.OWNER }}/grocery-frontend:${{ github.sha }},ghcr.io/${{ env.OWNER }}/grocery-frontend:latest
+
+  deploy:
+    needs: build-push
+    runs-on: self-hosted        # your Ubuntu desktop (runs next to the k3s cluster)
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
+      - name: Apply manifests
+        run: |
+          for f in k8s/*.yaml; do sed "s|OWNER|$OWNER|g" "$f" | kubectl apply -f -; done
+      - name: Roll out the new image version
+        run: |
+          kubectl -n grocery set image deployment/backend  backend=ghcr.io/$OWNER/grocery-backend:${{ github.sha }}
+          kubectl -n grocery set image deployment/frontend frontend=ghcr.io/$OWNER/grocery-frontend:${{ github.sha }}
+          kubectl -n grocery rollout status deployment/mysql    --timeout=300s
+          kubectl -n grocery rollout status deployment/backend  --timeout=300s
+          kubectl -n grocery rollout status deployment/frontend --timeout=300s
+      - run: kubectl -n grocery get pods,svc

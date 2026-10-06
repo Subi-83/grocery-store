@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: mysql-pvc, namespace: grocery }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 1Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: mysql, namespace: grocery }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: mysql } }
+  template:
+    metadata: { labels: { app: mysql } }
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          ports: [{ containerPort: 3306 }]
+          env:
+            - { name: MYSQL_DATABASE, valueFrom: { configMapKeyRef: { name: grocery-config, key: DB_NAME } } }
+            - { name: MYSQL_USER, valueFrom: { configMapKeyRef: { name: grocery-config, key: DB_USER } } }
+            - { name: MYSQL_PASSWORD, valueFrom: { secretKeyRef: { name: grocery-secret, key: DB_PASSWORD } } }
+            - { name: MYSQL_ROOT_PASSWORD, valueFrom: { secretKeyRef: { name: grocery-secret, key: MYSQL_ROOT_PASSWORD } } }
+          readinessProbe:
+            exec: { command: ["sh", "-c", "mysqladmin ping -h 127.0.0.1 -p$MYSQL_ROOT_PASSWORD"] }
+            initialDelaySeconds: 20
+            periodSeconds: 5
+          resources: { requests: { cpu: 100m, memory: 256Mi } }
+          volumeMounts: [{ name: data, mountPath: /var/lib/mysql }]
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: mysql-pvc }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: mysql, namespace: grocery }
+spec:
+  selector: { app: mysql }
+  ports: [{ port: 3306 }]

@@ -1,0 +1,16 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment: { MYSQL_ROOT_PASSWORD: rootpass, MYSQL_DATABASE: grocery, MYSQL_USER: grocery, MYSQL_PASSWORD: grocery }
+    volumes: [dbdata:/var/lib/mysql]
+    healthcheck: { test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-prootpass"], interval: 5s, retries: 20 }
+  backend:
+    build: ./backend
+    environment: { DB_HOST: mysql, DB_USER: grocery, DB_PASSWORD: grocery, DB_NAME: grocery, JWT_SECRET: local-secret }
+    depends_on: { mysql: { condition: service_healthy } }
+  frontend:
+    build: ./frontend
+    ports: ["8080:80"]
+    depends_on: [backend]
+volumes:
+  dbdata:

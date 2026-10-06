@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: backend, namespace: grocery }
+spec:
+  replicas: 2
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
+  selector: { matchLabels: { app: backend } }
+  template:
+    metadata: { labels: { app: backend } }
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/OWNER/grocery-backend:latest
+          ports: [{ containerPort: 5000 }]
+          envFrom: [{ configMapRef: { name: grocery-config } }]
+          env:
+            - { name: DB_PASSWORD, valueFrom: { secretKeyRef: { name: grocery-secret, key: DB_PASSWORD } } }
+            - { name: JWT_SECRET, valueFrom: { secretKeyRef: { name: grocery-secret, key: JWT_SECRET } } }
+          readinessProbe: { httpGet: { path: /health, port: 5000 }, initialDelaySeconds: 5, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /health, port: 5000 }, initialDelaySeconds: 20, periodSeconds: 10 }
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: backend, namespace: grocery }
+spec:
+  selector: { app: backend }
+  ports: [{ port: 5000 }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: backend-hpa, namespace: grocery }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: backend }
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
